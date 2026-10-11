@@ -10,6 +10,7 @@
 #include "db.h"
 #include "hash.h"
 #include "repo.h"
+#include "utf8.h"
 
 using namespace std;
 
@@ -49,6 +50,16 @@ bool is_inside(const fs::path& p, const fs::path& root) {
     const auto rr = fs::weakly_canonical(root);
     auto it = mismatch(rr.begin(), rr.end(), rp.begin(), rp.end()).first;
     return it == rr.end();
+}
+
+// Escapes SQL LIKE wildcards so a file name such as "my_file.txt" matches only itself.
+string like_escape(const string& s) {
+    string out;
+    for (char c : s) {
+        if (c == '%' || c == '_' || c == '!') out += '!';
+        out += c;
+    }
+    return out;
 }
 
 struct IngestStats {
@@ -101,7 +112,7 @@ void ingest_file(Repo& repo, int64_t jobId, const fs::path& p, int level, Ingest
                      "INSERT INTO files(job_id, path, size, mtime, file_hash) "
                      "VALUES(?1,?2,?3,?4,?5)");
         insFile.bind(1, jobId)
-            .bind(2, fs::absolute(p).lexically_normal().string())
+            .bind(2, path_to_utf8(fs::absolute(p).lexically_normal()))
             .bind(3, static_cast<int64_t>(size))
             .bind(4, mtime)
             .bind_blob(5, h.data(), h.size());
@@ -225,15 +236,22 @@ int cmd_restore(const fs::path& repoPath, const string& spec, const fs::path& ou
 
     const bool numeric = !spec.empty() && spec.find_first_not_of("0123456789") == string::npos;
     {
+        // A name matches a stored path when it is the whole path or a trailing
+        // component after either separator, so lookup works for repositories
+        // ingested on Windows ("\") and POSIX ("/") systems alike.
         const char* sql = numeric
             ? "SELECT id, path, size, file_hash FROM files WHERE id=?1"
-            : "SELECT id, path, size, file_hash FROM files WHERE path=?1 OR path LIKE ?2 "
+            : "SELECT id, path, size, file_hash FROM files "
+              "WHERE path=?1 OR path LIKE ?2 ESCAPE '!' OR path LIKE ?3 ESCAPE '!' "
               "ORDER BY id DESC LIMIT 1";
         Stmt q(repo.db(), sql);
-        if (numeric)
+        if (numeric) {
             q.bind(1, static_cast<int64_t>(stoll(spec)));
-        else
-            q.bind(1, spec).bind(2, "%\\" + spec);
+        } else {
+            const string name = path_to_utf8(path_from_utf8(spec).make_preferred());
+            const string esc = like_escape(name);
+            q.bind(1, name).bind(2, "%/" + esc).bind(3, "%\\" + esc);
+        }
         if (!q.step()) throw runtime_error("no ingested file matches: " + spec);
         fileId = q.col_int64(0);
         origPath = q.col_text(1);
@@ -242,7 +260,7 @@ int cmd_restore(const fs::path& repoPath, const string& spec, const fs::path& ou
     }
 
     fs::create_directories(outDir);
-    const fs::path outFile = outDir / fs::path(origPath).filename();
+    const fs::path outFile = outDir / path_from_utf8(origPath).filename();
     ofstream out(outFile, ios::binary | ios::trunc);
     if (!out) throw runtime_error("cannot create: " + outFile.string());
 
