@@ -11,22 +11,24 @@
 #include "hash.h"
 #include "repo.h"
 
-namespace fs = std::filesystem;
+using namespace std;
+
+namespace fs = filesystem;
 
 namespace {
 
 int64_t now_seconds() {
-    using namespace std::chrono;
+    using namespace chrono;
     return duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
 }
 
 int64_t mtime_seconds(const fs::path& p) {
-    using namespace std::chrono;
+    using namespace chrono;
     const auto sys = clock_cast<system_clock>(fs::last_write_time(p));
     return duration_cast<seconds>(sys.time_since_epoch()).count();
 }
 
-std::string format_bytes(uint64_t n) {
+string format_bytes(uint64_t n) {
     const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
     double v = static_cast<double>(n);
     int u = 0;
@@ -36,16 +38,16 @@ std::string format_bytes(uint64_t n) {
     }
     char buf[32];
     if (u == 0)
-        std::snprintf(buf, sizeof(buf), "%" PRIu64 " B", n);
+        snprintf(buf, sizeof(buf), "%" PRIu64 " B", n);
     else
-        std::snprintf(buf, sizeof(buf), "%.2f %s", v, units[u]);
+        snprintf(buf, sizeof(buf), "%.2f %s", v, units[u]);
     return buf;
 }
 
 bool is_inside(const fs::path& p, const fs::path& root) {
     const auto rp = fs::weakly_canonical(p);
     const auto rr = fs::weakly_canonical(root);
-    auto it = std::mismatch(rr.begin(), rr.end(), rp.begin(), rp.end()).first;
+    auto it = mismatch(rr.begin(), rr.end(), rp.begin(), rp.end()).first;
     return it == rr.end();
 }
 
@@ -62,7 +64,7 @@ void ingest_file(Repo& repo, int64_t jobId, const fs::path& p, int level, Ingest
     const uint64_t size = fs::file_size(p);
     const int64_t mtime = mtime_seconds(p);
     const Hash256 h = hash_file(p);
-    const std::string hex = to_hex(h);
+    const string hex = to_hex(h);
 
     repo.db().exec("BEGIN");
     try {
@@ -128,11 +130,11 @@ void ingest_file(Repo& repo, int64_t jobId, const fs::path& p, int level, Ingest
     }
 }
 
-std::vector<fs::path> collect_files(const std::vector<fs::path>& inputs, const fs::path& repoRoot) {
-    std::vector<fs::path> out;
+vector<fs::path> collect_files(const vector<fs::path>& inputs, const fs::path& repoRoot) {
+    vector<fs::path> out;
     for (const auto& in : inputs) {
         if (!fs::exists(in)) {
-            std::cerr << "warning: skipping missing path: " << in.string() << "\n";
+            cerr << "warning: skipping missing path: " << in.string() << "\n";
             continue;
         }
         if (fs::is_regular_file(in)) {
@@ -152,7 +154,7 @@ std::vector<fs::path> collect_files(const std::vector<fs::path>& inputs, const f
             }
             continue;
         }
-        std::cerr << "warning: skipping non-regular path: " << in.string() << "\n";
+        cerr << "warning: skipping non-regular path: " << in.string() << "\n";
     }
     return out;
 }
@@ -161,16 +163,16 @@ std::vector<fs::path> collect_files(const std::vector<fs::path>& inputs, const f
 
 int cmd_init(const fs::path& repoPath) {
     Repo::init(repoPath);
-    std::cout << "Initialized empty repository at " << fs::absolute(repoPath).string() << "\n";
+    cout << "Initialized empty repository at " << fs::absolute(repoPath).string() << "\n";
     return 0;
 }
 
-int cmd_ingest(const fs::path& repoPath, const std::vector<fs::path>& inputs, int level) {
+int cmd_ingest(const fs::path& repoPath, const vector<fs::path>& inputs, int level) {
     Repo repo = Repo::open(repoPath);
 
     const auto files = collect_files(inputs, repo.root());
     if (files.empty()) {
-        std::cout << "Nothing to ingest.\n";
+        cout << "Nothing to ingest.\n";
         return 0;
     }
 
@@ -183,8 +185,8 @@ int cmd_ingest(const fs::path& repoPath, const std::vector<fs::path>& inputs, in
     for (const auto& f : files) {
         try {
             ingest_file(repo, jobId, f, level, st);
-        } catch (const std::exception& e) {
-            std::cerr << "error: " << f.string() << ": " << e.what() << "\n";
+        } catch (const exception& e) {
+            cerr << "error: " << f.string() << ": " << e.what() << "\n";
             st.errors++;
         }
     }
@@ -197,31 +199,31 @@ int cmd_ingest(const fs::path& repoPath, const std::vector<fs::path>& inputs, in
         .bind(4, jobId);
     fin.run();
 
-    std::cout << "\nJob " << jobId << " complete\n"
+    cout << "\nJob " << jobId << " complete\n"
               << "  files ingested : " << st.files << "\n"
               << "  raw data       : " << format_bytes(st.rawBytes) << "\n"
               << "  deduplicated   : " << format_bytes(st.dedupedBytes) << "\n"
               << "  newly stored   : " << format_bytes(st.storedBytes) << " (after compression)\n";
     if (st.storedBytes > 0)
-        std::cout << "  overall ratio  : "
+        cout << "  overall ratio  : "
                   << static_cast<double>(st.rawBytes) / static_cast<double>(st.storedBytes)
                   << "x\n";
     if (st.errors > 0) {
-        std::cout << "  errors         : " << st.errors << "\n";
+        cout << "  errors         : " << st.errors << "\n";
         return 1;
     }
     return 0;
 }
 
-int cmd_restore(const fs::path& repoPath, const std::string& spec, const fs::path& outDir) {
+int cmd_restore(const fs::path& repoPath, const string& spec, const fs::path& outDir) {
     Repo repo = Repo::open(repoPath);
 
     int64_t fileId = -1;
-    std::string origPath;
+    string origPath;
     uint64_t size = 0;
-    std::vector<uint8_t> fileHash;
+    vector<uint8_t> fileHash;
 
-    const bool numeric = !spec.empty() && spec.find_first_not_of("0123456789") == std::string::npos;
+    const bool numeric = !spec.empty() && spec.find_first_not_of("0123456789") == string::npos;
     {
         const char* sql = numeric
             ? "SELECT id, path, size, file_hash FROM files WHERE id=?1"
@@ -229,10 +231,10 @@ int cmd_restore(const fs::path& repoPath, const std::string& spec, const fs::pat
               "ORDER BY id DESC LIMIT 1";
         Stmt q(repo.db(), sql);
         if (numeric)
-            q.bind(1, static_cast<int64_t>(std::stoll(spec)));
+            q.bind(1, static_cast<int64_t>(stoll(spec)));
         else
             q.bind(1, spec).bind(2, "%\\" + spec);
-        if (!q.step()) throw std::runtime_error("no ingested file matches: " + spec);
+        if (!q.step()) throw runtime_error("no ingested file matches: " + spec);
         fileId = q.col_int64(0);
         origPath = q.col_text(1);
         size = static_cast<uint64_t>(q.col_int64(2));
@@ -241,8 +243,8 @@ int cmd_restore(const fs::path& repoPath, const std::string& spec, const fs::pat
 
     fs::create_directories(outDir);
     const fs::path outFile = outDir / fs::path(origPath).filename();
-    std::ofstream out(outFile, std::ios::binary | std::ios::trunc);
-    if (!out) throw std::runtime_error("cannot create: " + outFile.string());
+    ofstream out(outFile, ios::binary | ios::trunc);
+    if (!out) throw runtime_error("cannot create: " + outFile.string());
 
     Stmt q(repo.db(),
            "SELECT c.hash, c.codec FROM file_chunks fc "
@@ -252,7 +254,7 @@ int cmd_restore(const fs::path& repoPath, const std::string& spec, const fs::pat
     while (q.step()) {
         const auto hashBlob = q.col_blob(0);
         Hash256 h{};
-        std::copy(hashBlob.begin(), hashBlob.end(), h.begin());
+        copy(hashBlob.begin(), hashBlob.end(), h.begin());
         const fs::path chunk = repo.chunk_path(to_hex(h));
         if (static_cast<Codec>(q.col_int64(1)) == Codec::Zstd)
             zstd_decompress_file(chunk, out);
@@ -262,11 +264,11 @@ int cmd_restore(const fs::path& repoPath, const std::string& spec, const fs::pat
     out.close();
 
     const Hash256 actual = hash_file(outFile);
-    if (!std::equal(actual.begin(), actual.end(), fileHash.begin(), fileHash.end())) {
-        throw std::runtime_error("VERIFICATION FAILED: restored file hash mismatch for " +
+    if (!equal(actual.begin(), actual.end(), fileHash.begin(), fileHash.end())) {
+        throw runtime_error("VERIFICATION FAILED: restored file hash mismatch for " +
                                  outFile.string());
     }
-    std::cout << "Restored " << origPath << "\n  -> " << fs::absolute(outFile).string() << " ("
+    cout << "Restored " << origPath << "\n  -> " << fs::absolute(outFile).string() << " ("
               << format_bytes(size) << ", hash verified)\n";
     return 0;
 }
@@ -274,9 +276,9 @@ int cmd_restore(const fs::path& repoPath, const std::string& spec, const fs::pat
 int cmd_list(const fs::path& repoPath) {
     Repo repo = Repo::open(repoPath);
     Stmt q(repo.db(), "SELECT id, job_id, size, path FROM files ORDER BY id");
-    std::printf("%6s %5s %12s  %s\n", "id", "job", "size", "path");
+    printf("%6s %5s %12s  %s\n", "id", "job", "size", "path");
     while (q.step()) {
-        std::printf("%6lld %5lld %12s  %s\n", static_cast<long long>(q.col_int64(0)),
+        printf("%6lld %5lld %12s  %s\n", static_cast<long long>(q.col_int64(0)),
                     static_cast<long long>(q.col_int64(1)),
                     format_bytes(static_cast<uint64_t>(q.col_int64(2))).c_str(),
                     q.col_text(3).c_str());
@@ -305,7 +307,7 @@ int cmd_stats(const fs::path& repoPath) {
         storedBytes = static_cast<uint64_t>(q.col_int64(2));
     }
 
-    std::cout << "Repository: " << repo.root().string() << "\n"
+    cout << "Repository: " << repo.root().string() << "\n"
               << "  files tracked     : " << fileCount << "\n"
               << "  logical data      : " << format_bytes(logicalBytes) << "\n"
               << "  unique data       : " << format_bytes(uniqueBytes) << " in " << chunkCount
@@ -314,7 +316,7 @@ int cmd_stats(const fs::path& repoPath) {
               << "  dedup savings     : " << format_bytes(logicalBytes - uniqueBytes) << "\n"
               << "  compression saving: " << format_bytes(uniqueBytes - storedBytes) << "\n";
     if (storedBytes > 0)
-        std::cout << "  overall ratio     : "
+        cout << "  overall ratio     : "
                   << static_cast<double>(logicalBytes) / static_cast<double>(storedBytes) << "x\n";
     return 0;
 }

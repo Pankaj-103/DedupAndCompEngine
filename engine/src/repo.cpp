@@ -4,7 +4,9 @@
 #include <random>
 #include <stdexcept>
 
-namespace fs = std::filesystem;
+using namespace std;
+
+namespace fs = filesystem;
 
 namespace {
 
@@ -46,17 +48,17 @@ CREATE TABLE IF NOT EXISTS file_chunks (
 
 void Repo::init(const fs::path& root) {
     if (fs::exists(root) && !fs::is_empty(root))
-        throw std::runtime_error("refusing to init: directory exists and is not empty: " +
+        throw runtime_error("refusing to init: directory exists and is not empty: " +
                                  root.string());
     fs::create_directories(root / "chunks");
 
-    std::ofstream cfg(root / "config.json");
+    ofstream cfg(root / "config.json");
     cfg << "{\n"
         << "  \"format_version\": 1,\n"
         << "  \"chunking\": \"whole-file\",\n"
         << "  \"hash\": \"blake3-256\"\n"
         << "}\n";
-    if (!cfg) throw std::runtime_error("cannot write config.json");
+    if (!cfg) throw runtime_error("cannot write config.json");
 
     Db db;
     db.open(root / "index.db");
@@ -65,7 +67,7 @@ void Repo::init(const fs::path& root) {
 
 Repo Repo::open(const fs::path& root) {
     if (!fs::exists(root / "config.json"))
-        throw std::runtime_error("not a repository (config.json missing): " + root.string());
+        throw runtime_error("not a repository (config.json missing): " + root.string());
     Repo r;
     r.root_ = fs::absolute(root);
     r.db_.open(root / "index.db");
@@ -73,13 +75,13 @@ Repo Repo::open(const fs::path& root) {
     return r;
 }
 
-fs::path Repo::chunk_path(const std::string& hex) const {
+fs::path Repo::chunk_path(const string& hex) const {
     fs::path dir = root_ / "chunks" / hex.substr(0, 2);
     fs::create_directories(dir);
     return dir / hex;
 }
 
 fs::path Repo::temp_chunk_path() const {
-    static std::mt19937_64 rng{std::random_device{}()};
-    return root_ / "chunks" / (".tmp-" + std::to_string(rng()));
+    static mt19937_64 rng{random_device{}()};
+    return root_ / "chunks" / (".tmp-" + to_string(rng()));
 }
